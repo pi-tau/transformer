@@ -28,10 +28,12 @@ class EncoderLayer(nn.Module):
         assert d_model % n_heads == 0, "model dims must be divisible by num heads"
 
         # The encoder layer has two sub-layers.
-        # Residual connections are applied around each of the two sub-layers,
-        # followed by layer normalization. In addition the output of each of the
-        # sub-layers is forwarded through a dropout layer to increase
-        # regularization.
+        # Residual connections are applied around each of the two sub-layers.
+        # Before applying the sub-layer we will normalize the input, as proposed
+        # in Ruibin Xiong et al. (http://proceedings.mlr.press/v119/xiong20b/xiong20b.pdf).
+        # This supports better gradient flow and removes the need for a warm-up
+        # stage. In addition the output of each of the sub-layers is forwarded
+        # through a dropout layer to increase regularization.
 
         # The first sub-layer is a multi-headed self-attention.
         self.attn = MultiHeadAttention(
@@ -68,15 +70,17 @@ class EncoderLayer(nn.Module):
             r: torch.Tensor
                 Tensor of shape (B, T, D), giving the encodings of the input.
         """
-        # Apply self-attention, then add the residual connection and normalize.
+        # Normalize, apply self-attention, then add the residual connection.
         # Broadcasting the mask along the last dim is enough for self-attention.
         if mask is not None: mask = mask.unsqueeze(dim=-1)
+        x = self.attn_norm(x)
         z, _ = self.attn(x, x, x, mask=mask)
-        z = self.attn_norm(x + self.attn_dropout(z))
+        z = x + self.attn_dropout(z)
 
-        # Run through the position-wise network, then add the residual and norm.
+        # Normalize, run through the position-wise network, then add the residual.
+        z = self.mlp_norm(z)
         r = self.mlp(z)
-        r = self.mlp_norm(z + self.mlp_dropout(r))
+        r = z + self.mlp_dropout(r)
 
         return r
 

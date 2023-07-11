@@ -29,11 +29,12 @@ class DecoderLayer(nn.Module):
         assert d_model % n_heads == 0, "model dims must be divisible by num heads"
 
         # The decoder layer has three sub-layers.
-        # Residual connections are applied around each of the three sub-layers,
-        # followed by layer normalization. In addition the output of each of the
-        # sub-layers is forwarded through a dropout layer to increase
-        # regularization. In addition the output of each of the sub-layers is
-        # forwarded through a dropout layer to increase regularization.
+        # Residual connections are applied around each of the three sub-layers.
+        # Before applying the sub-layer we will normalize the input, as proposed
+        # in Ruibin Xiong et al. (http://proceedings.mlr.press/v119/xiong20b/xiong20b.pdf).
+        # This supports better gradient flow and removes the need for a warm-up
+        # stage. In addition the output of each of the sub-layers is forwarded
+        # through a dropout layer to increase regularization.
 
         # The first sub-layer is a casually masked multi-headed self-attention.
         self.self_attn = MultiHeadAttention(
@@ -85,24 +86,27 @@ class DecoderLayer(nn.Module):
             r: torch.Tensor
                 Tensor of shape (B, T, D), giving the encodings of the input.
         """
-        # Apply causal self-attention, then add the residual connection and norm.
-        # For causal self-attention we logical-AND the normal mask with a causal mask.
+        # Normalize, apply causal self-attention, then add residual connection.
+        # For causal self-attention we use a causal mask.
         _, T, _ = x.shape
         causal_mask = torch.ones(T, T, dtype=torch.bool).tril().view(1, T, T).to(x.device)
+        x = self.self_attn_norm(x)
         z, _ = self.self_attn(x, x, x, mask=causal_mask)
-        z = self.self_attn_norm(x + self.self_attn_dropout(z))
+        z = x + self.self_attn_dropout(z)
 
-        # Apply cross-attention, then add the residual connection and normalize.
+        # Normalize, apply cross-attention, then add the residual connection.
         # Use the decoded sequence as queries and the encoder outputs as keys
         # and values (like memory). Broadcasting the mem mask along the second
         # to last dim is enough for cross-attn.
         if mem_mask is not None: mem_mask = mem_mask.unsqueeze(dim=-2)
+        z = self.cross_attn_norm(z)
         c, _ = self.cross_attn(z, mem, mem, mask=mem_mask)
-        c = self.cross_attn_norm(z + self.cross_attn_dropout(c))
+        c = z + self.cross_attn_dropout(c)
 
-        # Run through the position-wise network, then add the residual and norm.
+        # Normalize, run through the position-wise network, then add the residual.
+        c = self.mlp_norm(c)
         r = self.mlp(c)
-        r = self.mlp_norm(c + self.mlp_dropout(r))
+        r = c + self.mlp_dropout(r)
 
         return r
 
