@@ -117,8 +117,8 @@ class MultiHeadAttention(nn.Module):
         # we have s close to 1, we need to scale by sqrt(dk).
         dk = k.shape[-1]
         attn /=  np.sqrt(dk)
-        if mask is not None: # mask attn logits by setting them to a small value
-            attn = attn.masked_fill_(mask, -1e-8)
+        if mask is not None: # mask attn logits by setting them to a large negative value
+            attn.masked_fill_(~mask, -1e9)
         attn = torch.softmax(attn, dim=-1) # shape (B, nh, T, Ts)
 
         # It looks strange that we are applying dropout directly to the attention.
