@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class MultiHeadAttention(nn.Module):
@@ -16,10 +17,10 @@ class MultiHeadAttention(nn.Module):
             in_dim: int
                 Number of features in the input.
             qk_dim: int
-                Number of features in the queries and keys.
+                Number of features in the query and key embeddings.
             v_dim: int
-                Number of features in the values. The number of output features
-                will match the number of features in the values.
+                Number of features in the value embedding. The number of output
+                features will match the number of features in the values.
             n_heads: int
                 Number of attention heads.
             attn_dropout: float, optional
@@ -28,80 +29,85 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         assert qk_dim % n_heads == 0, "query and key dims must be divisible by num heads"
         assert v_dim % n_heads == 0, "value dim must be divisible by num heads"
-        self.in_dims = in_dim
-        self.qk_dim = qk_dim
-        self.v_dim = v_dim
         self.n_heads = n_heads
+        self.dropout_p = attn_dropout
 
-        self.qk = nn.Linear(in_dim, 2 * qk_dim, bias=False)
-        self.v = nn.Linear(in_dim, v_dim, bias=False)
+        self.Q = nn.Linear(in_dim, qk_dim, bias=False)
+        self.K = nn.Linear(in_dim, qk_dim, bias=False)
+        self.V = nn.Linear(in_dim, v_dim, bias=False)
         self.Wo = nn.Linear(v_dim, v_dim)
         self.attn_dropout = nn.Dropout(attn_dropout)
 
         # Initialize the Q and K matrices using Xavier initialization to make
-        # sure that the produced queries and keys have unit std. Note that we
-        # are manually setting the initialization parameters, because we are
-        # using a single batched layer containing the matrices for all heads.
-        nn.init.normal_(self.qk.weight, mean=0., std=np.sqrt(2 / (in_dim + qk_dim//n_heads)))
+        # sure that the produced queries and keys have unit std.
+        nn.init.xavier_normal_(self.Q.weight)
+        nn.init.xavier_normal_(self.K.weight)
 
-        # Initialize the V and Wo matrices to have Xavier weights and zero biases.
-        nn.init.xavier_normal_(self.v.weight)
-        nn.init.xavier_normal_(self.Wo.weight)
+        # The V and Wo matrices will use the default initialization for the
+        # weights. The Wo biases will be set to zero.
         nn.init.zeros_(self.Wo.bias)
 
-    def forward(self, x, mask=None):
-        """Transform the input using self-attention.
-        This layer uses scaled dot-product attention. Each input vector is
-        transformed into three separate representations: query, key and value.
-        All three have the same dimension: `out_dims // n_head`.
+        # Create a mask buffer for causal attention. We assume that the maximum
+        # sequence length will be 1024.
+        M = 1024
+        self.register_buffer(
+            "mask",
+            torch.ones(M, M, dtype=torch.bool).tril().view(1, 1, M, M),
+        )
+
+    def forward(self, queries, keys, values, is_causal=False):
+        """Compute the dot-product attention scores between the queries and keys
+        and combine the values using these scores. For computing self-attention
+        use as: `forward(x, x, x)`.
 
         Args:
-            x: torch.Tensor
-                Tensor of shape (B, T, D).
-            mask: torch.Tensor, optional
-                Boolean tensor of shape (B, T) used for masking specific entries
-                from the input tensor. Default: None.
+            queries: torch.Tensor
+                Tensor of shape (B, T, D) holding the queries.
+            keys: torch.Tensor
+                Tensor of shape (B, T, D) holding the keys.
+            values: torch.Tensor
+                Tensor of shape (B, T, D) holding the values.
+            is_causal: bool, optional
+                If True, assumes causal attention masking. Default: False.
 
         Returns:
             out: torch.Tensor
                 Tensor of shape (B, T, embed_dim), giving the encodings from the
-                self-attention layer.
+                attention layer.
             attn: torch.Tensor
-                Tensor of shape (B, n_head, T, T) giving the pairwise
-                self-attention probability scores from each head.
+                Tensor of shape (B, n_head, T, T) giving the pairwise attention
+                probability scores from each head.
         """
-        B, T, _ = x.shape
+        B, T, _ = queries.shape
 
-        # Compute the queries, keys and values using a single forward pass.
-        queries, keys = self.qk(x).chunk(chunks=2, dim=2)
-        values = self.v(x)
+        # Compute the query, key and value embeddings.
+        # For multi-head attention each embedding is reshaped into
+        # (B, T, nh, hid) and is transposed to (B, nh, T, hid).
+        q = self.Q(queries).view(B, T, self.n_heads, -1).transpose(1, 2) # X @ Q
+        k = self.K(keys).view(B, T, self.n_heads, -1).transpose(1, 2)    # X @ K
+        v = self.V(values).view(B, T, self.n_heads, -1).transpose(1, 2)  # X @ V
 
-        # Each is reshaped to (B, T, nh, hid) and is transposed to (B, nh, T, hid).
-        queries = queries.view(B, T, self.n_heads, -1).transpose(1, 2)  # X @ Q
-        keys = keys.view(B, T, self.n_heads, -1).transpose(1, 2)        # X @ K
-        values = values.view(B, T, self.n_heads, -1).transpose(1, 2)    # X @ V
-
-        # Compute the attentions scores by multiplying Qs and Ks.
-        # Both queries and keys are 4D tensors and `matmul` will perform a
-        # batched matrix multiplication over the last two dimensions.
-        attn = torch.matmul(queries, keys.transpose(2, 3)) # XV @ (XK)^T and shape (B, nh, T, T)
+        # Compute the attentions scores by multiplying qs and ks.
+        # Both are 4D tensors and `matmul` will perform a batched matrix
+        # multiplication over the last two dimensions.
+        attn = torch.matmul(q, k.transpose(2, 3)) # XQ @ (XK)^T and shape (B, nh, T, T)
 
         # Scale the attentions scores with the sqrt of the dimension of the keys.
-        # We want to scale the att scores, because dot products grow rapidly and
-        # the softmax will saturate to 1 for one of the elements and 0 for all
-        # others.
+        # We want to scale the attn scores, because dot products grow rapidly
+        # and the softmax will saturate to 1 for one of the elements and 0 for
+        # all others.
         # A more rigorous explanation is that we want to maintain the variance of
-        # the attentions scores to be the same as the variance of the Qs and Ks.
-        # Assuming: Q ~ N(0, s^2) and K ~ N(0, s^2), then Var(Q^T @ K) = s^4 * dk.
+        # the attentions scores to be the same as the variance of the qs and ks.
+        # Assuming: q ~ N(0, s^2) and k ~ N(0, s^2), then Var(q^T @ k) = s^4 * dk.
         # If we do not scale the variance back to s^2 some score might attain a
         # very large value and the softmax will saturate to 1. Since, originally
         # we have s close to 1, we need to scale by sqrt(dk).
-        dk = keys.shape[-1]
+        dk = k.shape[-1]
         attn /=  np.sqrt(dk)
-        if mask is not None:
+        if is_causal:
             # Set the attention logits for masked inputs to a very low value.
             # Unsqueeze the mask tensor to match the shape of the attention logits.
-            attn = attn.masked_fill_(mask[:, None, :, None], -1e-10)
+            attn = attn.masked_fill_(self.mask[:, :, :T, :T], -1e-8)
         attn = torch.softmax(attn, dim=-1) # shape (B, nh, T, T)
 
         # It looks strange that we are applying dropout directly to the attention.
@@ -114,9 +120,9 @@ class MultiHeadAttention(nn.Module):
 
         # Combine the values using the attention probabilities. Stack the output
         # from the heads and forward through the output layer.
-        z = torch.matmul(attn, queries) # shape (B, nh, T, hid)
+        z = torch.matmul(attn, v) # shape (B, nh, T, hid)
         z = z.transpose(1, 2).reshape(B, T, -1)
-        out = self.Wo(z)                # shape (B, T, out_dims)
+        out = self.Wo(z)          # shape (B, T, out_dims)
 
         return out, attn
 

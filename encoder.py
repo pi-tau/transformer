@@ -27,14 +27,15 @@ class EncoderLayer(nn.Module):
         super().__init__()
         assert d_model % n_heads == 0, "model dims must be divisible by num heads"
 
-        # The encoder layer has two sub-layers. The first is a multi-head attention,
-        # and the second is a position-wise fully connected network. Residual
-        # connections are applied around each of the two sub-layers, followed by
-        # layer normalization.
-        # In addition the output of each of the sub-layers is forwarded through
-        # a dropout layer to increase regularization.
+        # The encoder layer has two sub-layers.
+        # Residual connections are applied around each of the two sub-layers,
+        # followed by layer normalization. In addition the output of each of the
+        # sub-layers is forwarded through a dropout layer to increase
+        # regularization.
+
+        # The first sub-layer is a multi-headed self-attention.
         self.attn = MultiHeadAttention(
-            in_dims=d_model,
+            in_dim=d_model,
             qk_dim=d_model,
             v_dim=d_model,
             n_heads=n_heads,
@@ -43,6 +44,7 @@ class EncoderLayer(nn.Module):
         self.attn_dropout = nn.Dropout(dropout)
         self.attn_norm = nn.LayerNorm(d_model)
 
+        # The second sub-layer is a position-wise fully-connected network.
         self.mlp = nn.Sequential(
             nn.Linear(d_model, dim_mlp),
             nn.ReLU(),
@@ -51,22 +53,19 @@ class EncoderLayer(nn.Module):
         self.mlp_dropout = nn.Dropout(dropout)
         self.mlp_norm = nn.LayerNorm(d_model)
 
-    def forward(self, x, mask=None):
+    def forward(self, x):
         """Encode the input using the Transformer Encoder layer.
 
         Args:
             x: torch.Tensor
                 Tensor of shape (B, T, D).
-            mask: torch.Tensor, optional
-                Boolean tensor of shape (B, T) used for masking specific entries
-                from the input tensor. Default: None.
 
         Returns:
             r: torch.Tensor
                 Tensor of shape (B, T, D), giving the encodings of the input.
         """
         # Apply self-attention, then add the residual connection and normalize.
-        z, _ = self.attn(x, mask)
+        z, _ = self.attn(x, x, x)
         z = self.attn_norm(x + self.attn_dropout(z))
 
         # Run through the position-wise network, then add the residual and normalize.
