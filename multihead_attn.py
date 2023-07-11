@@ -55,7 +55,7 @@ class MultiHeadAttention(nn.Module):
             torch.ones(M, M, dtype=torch.bool).tril().view(1, 1, M, M),
         )
 
-    def forward(self, queries, keys, values, is_causal=False):
+    def forward(self, queries, keys, values, is_causal=False, need_attn=False):
         """Compute the dot-product attention scores between the queries and keys
         and combine the values using these scores. For computing self-attention
         use as: `forward(x, x, x)`.
@@ -69,6 +69,8 @@ class MultiHeadAttention(nn.Module):
                 Tensor of shape (B, T, D) holding the values.
             is_causal: bool, optional
                 If True, assumes causal attention masking. Default: False.
+            need_attn: bool, optional
+                If True, returns the attention probabilities. Default: False.
 
         Returns:
             out: torch.Tensor
@@ -86,6 +88,16 @@ class MultiHeadAttention(nn.Module):
         q = self.Q(queries).view(B, T, self.n_heads, -1).transpose(1, 2) # X @ Q
         k = self.K(keys).view(B, T, self.n_heads, -1).transpose(1, 2)    # X @ K
         v = self.V(values).view(B, T, self.n_heads, -1).transpose(1, 2)  # X @ V
+
+        # If we don't need the attention probabilities, then we can use the fast
+        # built-in implementation.
+        if not need_attn:
+            z = F.scaled_dot_product_attention(
+                q, k, v, dropout_p=self.dropout_p, is_causal=is_causal,
+            )
+            z = z.transpose(1, 2).reshape(B, T, -1)
+            out = self.Wo(z)                # shape (B, T, out_dims)
+            return out, None
 
         # Compute the attentions scores by multiplying qs and ks.
         # Both are 4D tensors and `matmul` will perform a batched matrix
