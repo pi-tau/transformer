@@ -80,6 +80,8 @@ class MultiHeadAttention(nn.Module):
         """
         B, T, _ = queries.shape
         _, Ts, _ = keys.shape
+        if mask is not None: # unsqueeze the mask to account for the head dim
+            mask = mask.unsqueeze(dim=1)
 
         # Compute the query, key and value embeddings.
         # For multi-head attention each embedding is reshaped into
@@ -90,14 +92,13 @@ class MultiHeadAttention(nn.Module):
 
         # If we don't need the attention probabilities, then we can use the fast
         # built-in implementation.
-        if not need_attn:
-            if mask is not None: mask = mask.unsqueeze(dim=1) # unsqueeze head dim
-            z = F.scaled_dot_product_attention(
-                q, k, v, attn_mask=mask, dropout_p=self.dropout_p,
-            )
-            z = z.transpose(1, 2).reshape(B, T, -1)
-            out = self.Wo(z) # shape (B, T, out_dims)
-            return out, None
+        # if not need_attn:
+        #     z = F.scaled_dot_product_attention(
+        #         q, k, v, attn_mask=mask, dropout_p=self.dropout_p,
+        #     )
+        #     z = z.transpose(1, 2).reshape(B, T, -1)
+        #     out = self.Wo(z) # shape (B, T, out_dims)
+        #     return out, None
 
         # Compute the attentions scores by multiplying qs and ks.
         # Both are 4D tensors and `matmul` will perform a batched matrix
@@ -116,10 +117,8 @@ class MultiHeadAttention(nn.Module):
         # we have s close to 1, we need to scale by sqrt(dk).
         dk = k.shape[-1]
         attn /=  np.sqrt(dk)
-        if mask is not None:
-            # Set the attention logits for masked inputs to a very low value.
-            # Unsqueeze the mask tensor to account for the head dimension.
-            attn = attn.masked_fill_(mask.unsqueeze(dim=1), -1e-8)
+        if mask is not None: # mask attn logits by setting them to a small value
+            attn = attn.masked_fill_(mask, -1e-8)
         attn = torch.softmax(attn, dim=-1) # shape (B, nh, T, Ts)
 
         # It looks strange that we are applying dropout directly to the attention.

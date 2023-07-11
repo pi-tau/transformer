@@ -67,7 +67,7 @@ class DecoderLayer(nn.Module):
         self.mlp_dropout = nn.Dropout(dropout)
         self.mlp_norm = nn.LayerNorm(d_model)
 
-    def forward(self, x, mem, x_mask=None, mem_mask=None):
+    def forward(self, x, mem, mem_mask=None):
         """Decode the input using the Transformer Decoder layer.
 
         Args:
@@ -75,10 +75,6 @@ class DecoderLayer(nn.Module):
                 Tensor of shape (B, T, D).
             mem: torch.Tensor
                 Tensor of shape (B, T_enc, D), giving the encoder outputs.
-            x_mask: torch.Tensor
-                Boolean tensor of shape (B, T), indicating which elements of
-                the input should be masked. A value of True indicates that the
-                element *should* take part in the computation. Default: None.
             mem_mask: torch.Tensor
                 Boolean tensor of shape (B, T_enc), indicating which elements of
                 the encoder outputs should be masked. A value of True indicates
@@ -92,9 +88,7 @@ class DecoderLayer(nn.Module):
         # Apply causal self-attention, then add the residual connection and norm.
         # For causal self-attention we logical-AND the normal mask with a causal mask.
         _, T, _ = x.shape
-        causal_mask = torch.ones(T, T, dtype=torch.bool).tril().view(1, T, T)
-        if x_mask is not None:
-            causal_mask = causal_mask & x_mask.unsqueeze(dim=-1)
+        causal_mask = torch.ones(T, T, dtype=torch.bool).tril().view(1, T, T).to(x.device)
         z, _ = self.self_attn(x, x, x, mask=causal_mask)
         z = self.self_attn_norm(x + self.self_attn_dropout(z))
 
