@@ -67,7 +67,7 @@ class DecoderLayer(nn.Module):
         self.mlp_dropout = nn.Dropout(dropout)
         self.mlp_norm = nn.LayerNorm(d_model)
 
-    def forward(self, x, mem):
+    def forward(self, x, mem, x_mask=None, mem_mask=None):
         """Decode the input using the Transformer Decoder layer.
 
         Args:
@@ -75,23 +75,41 @@ class DecoderLayer(nn.Module):
                 Tensor of shape (B, T, D).
             mem: torch.Tensor
                 Tensor of shape (B, T_enc, D), giving the encoder outputs.
+            x_mask: torch.Tensor
+                Boolean tensor of shape (B, T), indicating which elements of
+                the input should be masked. A value of True indicates that the
+                element *should* take part in the computation. Default: None.
+            mem_mask: torch.Tensor
+                Boolean tensor of shape (B, T_enc), indicating which elements of
+                the encoder outputs should be masked. A value of True indicates
+                that the element *should* take part in the computation.
+                Default: None.
 
         Returns:
             r: torch.Tensor
                 Tensor of shape (B, T, D), giving the encodings of the input.
         """
-        # Apply self-attention, then add the residual connection and normalize.
-        z, _ = self.self_attn(x, x, x, is_causal=True)
+        # Apply causal self-attention, then add the residual connection and norm.
+        # For causal self-attention we logical-AND the normal mask with a causal mask.
+        _, T, _ = x.shape
+        causal_mask = torch.ones(T, T, dtype=torch.bool).tril().view(1, T, T)
+        if x_mask is not None:
+            causal_mask = causal_mask & x_mask.unsqueeze(dim=-1)
+        z, _ = self.self_attn(x, x, x, mask=causal_mask)
         z = self.self_attn_norm(x + self.self_attn_dropout(z))
 
         # Apply cross-attention, then add the residual connection and normalize.
         # Use the decoded sequence as queries and the encoder outputs as keys
-        # and values (like memory).
-        c, _ = self.cross_attn(z, mem, mem)
+        # and values (like memory). Broadcasting the mem mask along the second
+        # to last dim is enough for cross-attn.
+        if mem_mask is not None: mem_mask = mem_mask.unsqueeze(dim=-2)
+        c, _ = self.cross_attn(z, mem, mem, mask=mem_mask)
         c = self.cross_attn_norm(z + self.cross_attn_dropout(c))
 
-        # Run through the position-wise network, then add the residual and normalize.
+        # Run through the position-wise network, then add the residual and norm.
         r = self.mlp(c)
         r = self.mlp_norm(c + self.mlp_dropout(r))
 
         return r
+
+#

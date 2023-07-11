@@ -47,15 +47,7 @@ class MultiHeadAttention(nn.Module):
         # weights. The Wo biases will be set to zero.
         nn.init.zeros_(self.Wo.bias)
 
-        # Create a mask buffer for causal attention. We assume that the maximum
-        # sequence length will be 1024.
-        M = 1024
-        self.register_buffer(
-            "mask",
-            torch.ones(M, M, dtype=torch.bool).tril().view(1, 1, M, M),
-        )
-
-    def forward(self, queries, keys, values, is_causal=False, need_attn=False):
+    def forward(self, queries, keys, values, mask=None, need_attn=False):
         """Compute the dot-product attention scores between the queries and keys
         and combine the values using these scores. For computing self-attention
         use as: `forward(x, x, x)`.
@@ -71,8 +63,10 @@ class MultiHeadAttention(nn.Module):
                 Tensor of shape (B, T_s, D) holding the keys.
             values: torch.Tensor
                 Tensor of shape (B, T_s, D) holding the values.
-            is_causal: bool, optional
-                If True, assumes causal attention masking. Default: False.
+            mask: torch.Tensor, optional
+                Boolean tensor of shape (B, T, T_s) used for masking the
+                attention between inputs. A value of True indicates that the
+                element *should* take part in attention. Default: None.
             need_attn: bool, optional
                 If True, returns the attention probabilities. Default: False.
 
@@ -97,8 +91,9 @@ class MultiHeadAttention(nn.Module):
         # If we don't need the attention probabilities, then we can use the fast
         # built-in implementation.
         if not need_attn:
+            if mask is not None: mask = mask.unsqueeze(dim=1) # unsqueeze head dim
             z = F.scaled_dot_product_attention(
-                q, k, v, dropout_p=self.dropout_p, is_causal=is_causal,
+                q, k, v, attn_mask=mask, dropout_p=self.dropout_p,
             )
             z = z.transpose(1, 2).reshape(B, T, -1)
             out = self.Wo(z) # shape (B, T, out_dims)
@@ -121,10 +116,10 @@ class MultiHeadAttention(nn.Module):
         # we have s close to 1, we need to scale by sqrt(dk).
         dk = k.shape[-1]
         attn /=  np.sqrt(dk)
-        if is_causal:
+        if mask is not None:
             # Set the attention logits for masked inputs to a very low value.
-            # Unsqueeze the mask tensor to match the shape of the attention logits.
-            attn = attn.masked_fill_(self.mask[:, :, :T, :Ts], -1e-8)
+            # Unsqueeze the mask tensor to account for the head dimension.
+            attn = attn.masked_fill_(mask.unsqueeze(dim=1), -1e-8)
         attn = torch.softmax(attn, dim=-1) # shape (B, nh, T, Ts)
 
         # It looks strange that we are applying dropout directly to the attention.

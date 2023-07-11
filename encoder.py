@@ -53,22 +53,28 @@ class EncoderLayer(nn.Module):
         self.mlp_dropout = nn.Dropout(dropout)
         self.mlp_norm = nn.LayerNorm(d_model)
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         """Encode the input using the Transformer Encoder layer.
 
         Args:
             x: torch.Tensor
                 Tensor of shape (B, T, D).
+            mask: torch.Tensor
+                Boolean tensor of shape (B, T), indicating which elements of
+                the input should be masked. A value of True indicates that the
+                element *should* take part in the computation. Default: None.
 
         Returns:
             r: torch.Tensor
                 Tensor of shape (B, T, D), giving the encodings of the input.
         """
         # Apply self-attention, then add the residual connection and normalize.
-        z, _ = self.attn(x, x, x)
+        # Broadcasting the mask along the last dim is enough for self-attention.
+        if mask is not None: mask = mask.unsqueeze(dim=-1)
+        z, _ = self.attn(x, x, x, mask=mask)
         z = self.attn_norm(x + self.attn_dropout(z))
 
-        # Run through the position-wise network, then add the residual and normalize.
+        # Run through the position-wise network, then add the residual and norm.
         r = self.mlp(z)
         r = self.mlp_norm(z + self.mlp_dropout(r))
 
