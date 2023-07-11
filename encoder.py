@@ -27,6 +27,12 @@ class EncoderLayer(nn.Module):
         super().__init__()
         assert d_model % n_head == 0, "model dims must be divisible by num heads"
 
+        # The encoder layer has two sub-layers. The first is a multi-head attention,
+        # and the second is a position-wise fully connected network. Residual
+        # connections are applied around each of the two sub-layers, followed by
+        # layer normalization.
+        # In addition the output of each of the sub-layers is forwarded through
+        # a dropout layer to increase regularization.
         self.attn = MultiHeadAttention(d_model, d_model, n_head, dropout)
         self.attn_dropout = nn.Dropout(dropout)
         self.attn_norm = nn.LayerNorm(d_model)
@@ -35,16 +41,12 @@ class EncoderLayer(nn.Module):
             nn.Linear(d_model, dim_mlp),
             nn.ReLU(),
             nn.Linear(dim_mlp, d_model),
-            nn.Dropout(dropout)
         )
+        self.mlp_dropout = nn.Dropout(dropout)
         self.mlp_norm = nn.LayerNorm(d_model)
 
     def forward(self, x, mask=None):
         """Encode the input using the Transformer Encoder layer.
-        The encoder layer has two sub-layers. The first is a multi-head attention,
-        and the second is a position-wise fully connected network. Residual
-        connections are applied around each of the two sub-layers, followed by
-        layer normalization.
 
         Args:
             x: torch.Tensor
@@ -63,7 +65,7 @@ class EncoderLayer(nn.Module):
 
         # Run through the position-wise network, then add the residual and normalize.
         r = self.mlp(z)
-        r = self.mlp_norm(z + r)
+        r = self.mlp_norm(z + self.mlp_dropout(r))
 
         return r
 
