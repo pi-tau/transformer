@@ -1,0 +1,12 @@
+# Virtual Environment
+.venv
+
+# Byte-compiled Files
+__pycache__
+bin/
+
+# Datasets
+datasets/
+
+# trash folder for storing random files
+trash/
