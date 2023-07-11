@@ -9,7 +9,7 @@ class MultiHeadAttention(nn.Module):
     https://arxiv.org/abs/1706.03762
     """
 
-    def __init__(self, in_dims, out_dims, n_heads, att_dropout=0.):
+    def __init__(self, in_dims, out_dims, n_heads, attn_dropout=0.):
         """Init a multi-head attention layer.
 
         Args:
@@ -19,7 +19,7 @@ class MultiHeadAttention(nn.Module):
                 Number of features in the output encodings.
             n_heads: int
                 Number of attention heads.
-            att_dropout: float, optional
+            attn_dropout: float, optional
                 Dropout value for the attention scores. Default: 0.
         """
         super().__init__()
@@ -30,7 +30,7 @@ class MultiHeadAttention(nn.Module):
 
         self.qkv = nn.Linear(in_dims, 3 * out_dims, bias=False)
         self.Wo = nn.Linear(out_dims, out_dims)
-        self.att_dropout = nn.Dropout(att_dropout)
+        self.attn_dropout = nn.Dropout(attn_dropout)
 
         # Initialize the Q, K, and V matrices using Xavier initialization to
         # make sure that the produced queries and keys have unit std. Note that
@@ -59,7 +59,7 @@ class MultiHeadAttention(nn.Module):
             out: torch.Tensor
                 Tensor of shape (B, T, embed_dim), giving the encodings from the
                 self-attention layer.
-            att: torch.Tensor
+            attn: torch.Tensor
                 Tensor of shape (B, n_head, T, T) giving the pairwise
                 self-attention probability scores from each head.
         """
@@ -76,7 +76,7 @@ class MultiHeadAttention(nn.Module):
         # Compute the attentions scores by multiplying Qs and Ks.
         # Both queries and keys are 4D tensors and `matmul` will perform a
         # batched matrix multiplication over the last two dimensions.
-        att = torch.matmul(queries, keys.transpose(2, 3)) # XV @ (XK)^T and shape (B, nh, T, T)
+        attn = torch.matmul(queries, keys.transpose(2, 3)) # XV @ (XK)^T and shape (B, nh, T, T)
 
         # Scale the attentions scores with the sqrt of the dimension of the keys.
         # We want to scale the att scores, because dot products grow rapidly and
@@ -89,12 +89,12 @@ class MultiHeadAttention(nn.Module):
         # very large value and the softmax will saturate to 1. Since, originally
         # we have s close to 1, we need to scale by sqrt(dk).
         dk = keys.shape[-1]
-        att /=  np.sqrt(dk)
+        attn /=  np.sqrt(dk)
         if mask is not None:
             # Set the attention logits for masked inputs to a very low value.
             # Unsqueeze the mask tensor to match the shape of the attention logits.
-            att = att.masked_fill_(mask[:, None, :, None], -1e-10)
-        att = torch.softmax(att, dim=-1) # shape (B, nh, T, T)
+            attn = attn.masked_fill_(mask[:, None, :, None], -1e-10)
+        attn = torch.softmax(attn, dim=-1) # shape (B, nh, T, T)
 
         # It looks strange that we are applying dropout directly to the attention.
         # This means that our attention vector will most probably not sum to 1.
@@ -102,14 +102,14 @@ class MultiHeadAttention(nn.Module):
         # implementation, including BERT and GPT.
         # However, note that during evaluation dropout is not applied so we are
         # probably fine.
-        att = self.att_dropout(att)
+        attn = self.attn_dropout(attn)
 
         # Compute the outputs from the multiple attention heads and concatenate
         # them along the hidden dimensions. Then forward through the output layer.
-        z = torch.matmul(att, queries)      # shape (B, nh, T, hid)
+        z = torch.matmul(attn, queries)      # shape (B, nh, T, hid)
         z = z.transpose(1, 2).reshape(B, T, -1)
         out = self.Wo(z)                    # shape (B, T, out_dims)
 
-        return out, att
+        return out, attn
 
 #
