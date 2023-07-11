@@ -9,36 +9,43 @@ class MultiHeadAttention(nn.Module):
     https://arxiv.org/abs/1706.03762
     """
 
-    def __init__(self, in_dims, out_dims, n_heads, attn_dropout=0.):
+    def __init__(self, in_dim, qk_dim, v_dim, n_heads, attn_dropout=0.):
         """Init a multi-head attention layer.
 
         Args:
-            in_dims: int
+            in_dim: int
                 Number of features in the input.
-            out_dims: int
-                Number of features in the output encodings.
+            qk_dim: int
+                Number of features in the queries and keys.
+            v_dim: int
+                Number of features in the values. The number of output features
+                will match the number of features in the values.
             n_heads: int
                 Number of attention heads.
             attn_dropout: float, optional
                 Dropout value for the attention scores. Default: 0.
         """
         super().__init__()
-        assert out_dims % n_heads == 0, "out dims must be divisible by num heads"
-        self.in_dims = in_dims
-        self.out_dims = out_dims
+        assert qk_dim % n_heads == 0, "query and key dims must be divisible by num heads"
+        assert v_dim % n_heads == 0, "value dim must be divisible by num heads"
+        self.in_dims = in_dim
+        self.qk_dim = qk_dim
+        self.v_dim = v_dim
         self.n_heads = n_heads
 
-        self.qkv = nn.Linear(in_dims, 3 * out_dims, bias=False)
-        self.Wo = nn.Linear(out_dims, out_dims)
+        self.qk = nn.Linear(in_dim, 2 * qk_dim, bias=False)
+        self.v = nn.Linear(in_dim, v_dim, bias=False)
+        self.Wo = nn.Linear(v_dim, v_dim)
         self.attn_dropout = nn.Dropout(attn_dropout)
 
-        # Initialize the Q, K, and V matrices using Xavier initialization to
-        # make sure that the produced queries and keys have unit std. Note that
-        # we are manually setting the initialization parameters, because we are
-        # using a single batched layer containing the three matrices.
-        nn.init.normal_(self.qkv.weight, mean=0., std=np.sqrt(2 / (in_dims+out_dims)))
+        # Initialize the Q and K matrices using Xavier initialization to make
+        # sure that the produced queries and keys have unit std. Note that we
+        # are manually setting the initialization parameters, because we are
+        # using a single batched layer containing the matrices for all heads.
+        nn.init.normal_(self.qk.weight, mean=0., std=np.sqrt(2 / (in_dim + qk_dim//n_heads)))
 
-        # Initialize the output layer to have Xavier weights and zero biases.
+        # Initialize the V and Wo matrices to have Xavier weights and zero biases.
+        nn.init.xavier_normal_(self.v.weight)
         nn.init.xavier_normal_(self.Wo.weight)
         nn.init.zeros_(self.Wo.bias)
 
@@ -66,7 +73,8 @@ class MultiHeadAttention(nn.Module):
         B, T, _ = x.shape
 
         # Compute the queries, keys and values using a single forward pass.
-        queries, keys, values = self.qkv(x).chunk(chunks=3, dim=2)
+        queries, keys = self.qk(x).chunk(chunks=2, dim=2)
+        values = self.v(x)
 
         # Each is reshaped to (B, T, nh, hid) and is transposed to (B, nh, T, hid).
         queries = queries.view(B, T, self.n_heads, -1).transpose(1, 2)  # X @ Q
@@ -104,11 +112,11 @@ class MultiHeadAttention(nn.Module):
         # probably fine.
         attn = self.attn_dropout(attn)
 
-        # Compute the outputs from the multiple attention heads and concatenate
-        # them along the hidden dimensions. Then forward through the output layer.
-        z = torch.matmul(attn, queries)      # shape (B, nh, T, hid)
+        # Combine the values using the attention probabilities. Stack the output
+        # from the heads and forward through the output layer.
+        z = torch.matmul(attn, queries) # shape (B, nh, T, hid)
         z = z.transpose(1, 2).reshape(B, T, -1)
-        out = self.Wo(z)                    # shape (B, T, out_dims)
+        out = self.Wo(z)                # shape (B, T, out_dims)
 
         return out, attn
 

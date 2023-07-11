@@ -9,14 +9,14 @@ class EncoderLayer(nn.Module):
     https://arxiv.org/abs/1706.03762
     """
 
-    def __init__(self, d_model, n_head, dim_mlp=2048, dropout=0.0):
+    def __init__(self, d_model, n_heads, dim_mlp=2048, dropout=0.0):
         """Init an Encoder layer for the Transformer model.
 
         Args:
             d_model: int
                 Size of the encoder layer. Because the model uses residual
                 connections, both the input and the output will have the same size.
-            n_head: int
+            n_heads: int
                 Number of heads for multi-head attention.
             dim_mlp: int, optional
                 Dimension of the hidden layer of the MLP network. Default: 2048.
@@ -25,7 +25,7 @@ class EncoderLayer(nn.Module):
                 to the outputs of the sub-layers. Default: 0.
         """
         super().__init__()
-        assert d_model % n_head == 0, "model dims must be divisible by num heads"
+        assert d_model % n_heads == 0, "model dims must be divisible by num heads"
 
         # The encoder layer has two sub-layers. The first is a multi-head attention,
         # and the second is a position-wise fully connected network. Residual
@@ -33,7 +33,13 @@ class EncoderLayer(nn.Module):
         # layer normalization.
         # In addition the output of each of the sub-layers is forwarded through
         # a dropout layer to increase regularization.
-        self.attn = MultiHeadAttention(d_model, d_model, n_head, dropout)
+        self.attn = MultiHeadAttention(
+            in_dims=d_model,
+            qk_dim=d_model,
+            v_dim=d_model,
+            n_heads=n_heads,
+            attn_dropout=dropout,
+        )
         self.attn_dropout = nn.Dropout(dropout)
         self.attn_norm = nn.LayerNorm(d_model)
 
