@@ -60,13 +60,17 @@ class MultiHeadAttention(nn.Module):
         and combine the values using these scores. For computing self-attention
         use as: `forward(x, x, x)`.
 
+        Note that sequence length of queries and keys and values might differ.
+        E.g. queries might come from the decoder and the keys and values from
+        the encoder.
+
         Args:
             queries: torch.Tensor
                 Tensor of shape (B, T, D) holding the queries.
             keys: torch.Tensor
-                Tensor of shape (B, T, D) holding the keys.
+                Tensor of shape (B, T_s, D) holding the keys.
             values: torch.Tensor
-                Tensor of shape (B, T, D) holding the values.
+                Tensor of shape (B, T_s, D) holding the values.
             is_causal: bool, optional
                 If True, assumes causal attention masking. Default: False.
             need_attn: bool, optional
@@ -77,17 +81,18 @@ class MultiHeadAttention(nn.Module):
                 Tensor of shape (B, T, embed_dim), giving the encodings from the
                 attention layer.
             attn: torch.Tensor
-                Tensor of shape (B, n_head, T, T) giving the pairwise attention
-                probability scores from each head.
+                Tensor of shape (B, n_head, T, T_s) giving the pairwise
+                attention probability scores from each head.
         """
         B, T, _ = queries.shape
+        _, Ts, _ = keys.shape
 
         # Compute the query, key and value embeddings.
         # For multi-head attention each embedding is reshaped into
         # (B, T, nh, hid) and is transposed to (B, nh, T, hid).
         q = self.Q(queries).view(B, T, self.n_heads, -1).transpose(1, 2) # X @ Q
-        k = self.K(keys).view(B, T, self.n_heads, -1).transpose(1, 2)    # X @ K
-        v = self.V(values).view(B, T, self.n_heads, -1).transpose(1, 2)  # X @ V
+        k = self.K(keys).view(B, Ts, self.n_heads, -1).transpose(1, 2)   # X @ K
+        v = self.V(values).view(B, Ts, self.n_heads, -1).transpose(1, 2) # X @ V
 
         # If we don't need the attention probabilities, then we can use the fast
         # built-in implementation.
@@ -96,13 +101,13 @@ class MultiHeadAttention(nn.Module):
                 q, k, v, dropout_p=self.dropout_p, is_causal=is_causal,
             )
             z = z.transpose(1, 2).reshape(B, T, -1)
-            out = self.Wo(z)                # shape (B, T, out_dims)
+            out = self.Wo(z) # shape (B, T, out_dims)
             return out, None
 
         # Compute the attentions scores by multiplying qs and ks.
         # Both are 4D tensors and `matmul` will perform a batched matrix
         # multiplication over the last two dimensions.
-        attn = torch.matmul(q, k.transpose(2, 3)) # XQ @ (XK)^T and shape (B, nh, T, T)
+        attn = torch.matmul(q, k.transpose(2, 3)) # XQ @ (XK)^T and shape (B, nh, T, Ts)
 
         # Scale the attentions scores with the sqrt of the dimension of the keys.
         # We want to scale the attn scores, because dot products grow rapidly
@@ -119,8 +124,8 @@ class MultiHeadAttention(nn.Module):
         if is_causal:
             # Set the attention logits for masked inputs to a very low value.
             # Unsqueeze the mask tensor to match the shape of the attention logits.
-            attn = attn.masked_fill_(self.mask[:, :, :T, :T], -1e-8)
-        attn = torch.softmax(attn, dim=-1) # shape (B, nh, T, T)
+            attn = attn.masked_fill_(self.mask[:, :, :T, :Ts], -1e-8)
+        attn = torch.softmax(attn, dim=-1) # shape (B, nh, T, Ts)
 
         # It looks strange that we are applying dropout directly to the attention.
         # This means that our attention vector will most probably not sum to 1.
