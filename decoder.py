@@ -89,7 +89,7 @@ class DecoderLayer(nn.Module):
         # Normalize, apply causal self-attention, then add residual connection.
         # For causal self-attention we use a causal mask.
         _, T, _ = x.shape
-        causal_mask = torch.ones(T, T, dtype=torch.bool).tril().view(1, T, T).to(x.device)
+        causal_mask = torch.ones(1, T, T, dtype=torch.bool).tril().to(x.device)
         x = self.self_attn_norm(x)
         z, _ = self.self_attn(x, x, x, mask=causal_mask)
         z = x + self.self_attn_dropout(z)
