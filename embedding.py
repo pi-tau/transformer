@@ -1,53 +1,46 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
-class EmbeddingLayer(nn.Module):
-    """Embedding layer with positional encoding."""
+class TokenEmbedding(nn.Module):
+    """Token embedding layer with positional encoding."""
 
-    def __init__(self, vocab_size, embed_size, dropout=0., max_len=256):
+    def __init__(self, word_embed_weight, pos_embed_weight, scale, dropout):
         """Init an embedding layer.
 
         Args:
-            vocab_size: int
-                Size of the token vocabulary.
-            embed_size: int
-                Size of the embedding space.
-            dropout: float, optional
-                Dropout rate applied for embeddings. Default: 0.
-            max_len: int, optional
-                Maximum length of the token sequence. Default: 256.
+            word_embed_weights: torch.Tensor
+                Word embedding matrix.
+            pos_embed_weights: torch.Tensor
+                Positional embedding matrix.
+            scale: float
+                Scaling factor for scaling the word embeddings before summing
+                with the positional embeddings.
+            dropout: float
+                Dropout rate applied to the final embeddings.
         """
         super().__init__()
-        # Use nn.Embedding. Similar to nn.Linear but accepts indices instead of
-        # one-hot vectors.
-        self.word_embed = nn.Embedding(vocab_size, embed_size)
-        self.pos_embed = nn.Embedding(max_len, embed_size)
+        max_len, _ = pos_embed_weight.shape
+        self.max_len = max_len
+        self.word_embed_weight = word_embed_weight
+        self.pos_embed_weight = pos_embed_weight
         self.dropout = nn.Dropout(dropout)
 
         # Register a buffer with sequence positions. At runtime simply slice
         # the buffer to the requested size.
         self.register_buffer("positions", torch.arange(max_len).unsqueeze(dim=0))
-
-        # TODO: Explain why we need to scale the word embeddings.
-        self.register_buffer("scale", torch.sqrt(torch.FloatTensor([embed_size])))
+        self.register_buffer("scale", torch.sqrt(torch.FloatTensor([scale])))
 
     def forward(self, x):
-        """Generate embedding vectors for the given sequence of tokens.
-        The final embeddings are computed by simply summing the word embeddings
-        with the positional embeddings.
-
-        Args:
-            x: torch.Tensor
-                Tensor of shape (B, T) giving a batch of sequences.
-
-        Returns:
-            embed: torch.Tensor
-                Tensor of shape (B, T, D) giving the embeddings of each token.
-        """
         _, T = x.shape
+        if T >= self.max_len: # explicitly check out-of-bound slicing
+            raise RuntimeError("Sequence length exceeds the maximum allowed limit")
+
         pos = self.positions[:, :T]
-        embed = self.pos_embed(pos) + self.word_embed(x) * self.scale
+        word_embed = F.embedding(x, self.word_embed_weight)
+        pos_embed = F.embedding(pos, self.pos_embed_weight)
+        embed = pos_embed + word_embed * self.scale
         return self.dropout(embed)
 
 #

@@ -1,9 +1,10 @@
+import numpy as np
 import torch
 import torch.nn as nn
 
 from encoder import EncoderBlock
 from decoder import DecoderBlock
-from embedding import EmbeddingLayer
+from embedding import TokenEmbedding
 
 
 class Transformer(nn.Module):
@@ -12,16 +13,19 @@ class Transformer(nn.Module):
     """
 
     def __init__(
-            self, src_vocab_size, tgt_vocab_size,
-            d_model, n_heads, n_enc, n_dec, dim_mlp=2048, dropout=0.0,
+            self, src_vocab_size, tgt_vocab_size, max_seq_len,
+            d_model, n_heads, n_enc, n_dec, dim_mlp, dropout,
         ):
         """Init a Transformer model.
 
         Args:
             src_vocab_size: int
                 Size of the source vocab.
-            tgt_vocab_size: int
-                Size of the target vocab.
+            tgt_vocab_size: int | None
+                Size of the target vocab. If None, then the model assumes the
+                source and target sequences come from the same vocabulary.
+            max_seq_len: int
+                Maximum expected length of source and target sequences.
             d_model: int
                 Size of the encoder and decoder layers. Because the model uses
                 residual connections, all encodings will have the same size.
@@ -31,17 +35,31 @@ class Transformer(nn.Module):
                 Number of Encoder layers in the Encoder.
             n_dec: int
                 Number of Decoder layers in the Decoder.
-            dim_mlp: int, optional
-                Dimension of the hidden layer of the MLP network. Default: 2048.
-            dropout: int, optional
+            dim_mlp: int
+                Dimension of the hidden layer of the MLP network.
+            dropout: float
                 Dropout rate applied for encoder, decoder and embedding layers.
-                Default: 0.
         """
         super().__init__()
 
+        # Set-up the word embedding and the positional embedding matrices.
+        scale = np.sqrt(d_model)
+        pos_embed = nn.Parameter(torch.randn(max_seq_len, d_model))
+        src_word_embed = nn.Parameter(torch.randn(src_vocab_size, d_model) / scale)
+        if tgt_vocab_size is None:
+            tgt_word_embed = src_word_embed
+        else:
+            tgt_word_embed = nn.Parameter(torch.randn(tgt_vocab_size, d_model) / scale)
+
         # Define the embedding layers for the src and tgt sequences.
-        self.src_embed = EmbeddingLayer(src_vocab_size, d_model)
-        self.tgt_embed = EmbeddingLayer(tgt_vocab_size, d_model)
+        # The positional embedding matrix will be shared between the source and
+        # the target sequence. If no target vocab is provided, then the word
+        # embedding matrix will be shared as well.
+        # The final output layer of the decoder will share the same weights with
+        # the word embedding matrix for the target sequence.
+        self.src_embed = TokenEmbedding(src_word_embed, pos_embed, scale, dropout)
+        self.tgt_embed = TokenEmbedding(tgt_word_embed, pos_embed, scale, dropout)
+        self.tgt_proj_weight = tgt_word_embed
 
         # Define the encoder and the decoder modules.
         # Note that because of the Pre-LN architecture we need to apply layer
@@ -54,14 +72,6 @@ class Transformer(nn.Module):
             DecoderBlock(d_model, n_heads, dim_mlp, dropout) for _ in range(n_dec)
         ))
         self.dec_norm = nn.LayerNorm(d_model)
-
-        # Project the embeddings from the decoder into the target vocab space.
-        self.tgt_vocab_proj = nn.Linear(d_model, tgt_vocab_size, bias=False)
-
-        # Initialize model parameters.
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
 
     def encode(self, src, src_mask):
         z = self.src_embed(src)
@@ -95,14 +105,14 @@ class Transformer(nn.Module):
                 *should* take part in the computation. Default: None.
 
         Returns:
-            tgt_log_probs: torch.Tensor
+            tgt_vocab_scores: torch.Tensor
                 Torch tensor of shape (B, T_tgt, tgt_vocab) assigning logit
                 scores over the target vocab for each element of the target
                 sequence.
         """
         mem = self.encode(src, src_mask)
         out = self.decode(tgt, mem, src_mask)
-        tgt_scores = self.tgt_vocab_proj(out)
+        tgt_scores = F.linear(out, self.tgt_proj_weight)
         return tgt_scores
 
     @torch.no_grad()
@@ -142,7 +152,7 @@ class Transformer(nn.Module):
         for _ in range(max_len-1):
             # Decode the next element of the target sequence.
             out = self.decode(tgt, mem, mem_mask=src_mask)
-            scores = self.tgt_vocab_proj(out)
+            scores = F.linear(out, self.tgt_proj_weight)
             next_idx = torch.max(scores[:, -1:], dim=-1).indices
             tgt = torch.concat((tgt, next_idx), dim=1)
 
@@ -172,7 +182,7 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     bos_idx, eos_idx, pad_idx = 1, 2, 0
-    vocab_size, max_len = 100, 32
+    vocab_size, max_len = 100, 16
 
     data_loader = data.DataLoader(  # random sequences of different lengths
         dataset=[torch.randint(3, vocab_size, (randint(max_len//2, max_len),)) for _ in range(50000)],
@@ -186,13 +196,10 @@ if __name__ == "__main__":
     )
 
     transformer = Transformer(
-        src_vocab_size=vocab_size, tgt_vocab_size=vocab_size,
-        d_model=64, n_heads=1, n_enc=2, n_dec=2, dim_mlp=128, dropout=0.3,
+        src_vocab_size=vocab_size, tgt_vocab_size=None,
+        d_model=64, n_heads=1, n_enc=2, n_dec=2, dim_mlp=128, dropout=0.1,
     ).to(device)
-    optim = torch.optim.AdamW(transformer.parameters(), lr=1e-3, weight_decay=1e-4)
-    lr_scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optim, lr_lambda=lambda i: i/1000 if i <= 1000 else (i/1000)**(-0.5)
-    )                               # linear warm-up        # quadratic slow-down
+    optim = torch.optim.Adam(transformer.parameters(), lr=1e-3, weight_decay=0.)
 
     epochs = 50
     pbar = tqdm(total=epochs*len(data_loader), desc="Iteration")
@@ -210,13 +217,12 @@ if __name__ == "__main__":
             loss.backward()
             torch.nn.utils.clip_grad_norm_(transformer.parameters(), 1.)
             optim.step()
-            lr_scheduler.step()
 
             pbar.update()
 
-        x1 = torch.LongTensor([3, 5, 8, 13, 21, 34, 55]).unsqueeze(dim=0).to(device)
+        x1 = torch.LongTensor([3, 5, 8, 13, 21, 34, 55, 89]).unsqueeze(dim=0).to(device)
         y1 = transformer.greedy_decode(x1, None, bos_idx, eos_idx)
-        x2 = torch.randint(low=3, high=vocab_size, size=(15,)).unsqueeze(dim=0).to(device)
+        x2 = torch.randint(low=3, high=vocab_size, size=(14,)).unsqueeze(dim=0).to(device)
         y2 = transformer.greedy_decode(x2, None, bos_idx, eos_idx)
         tqdm.write(f"Epoch: {e+1}\n\tx1: {x1}\n\ty1: {y1}\n\n\tx2: {x2}\n\ty2: {y2}")
         tqdm.write(f"\tloss: {epoch_loss/len(data_loader):.5f}")
@@ -224,16 +230,3 @@ if __name__ == "__main__":
     pbar.close()
 
 #
-
-"""
->>> a, b = next(iter(data_loader))
->>> src, tgt = a.to(device), b.to(device)
->>> tgt_in, tgt_out = tgt[:, :-1], tgt[:, 1:]
->>> mask = (src != pad_idx)
->>> mem = transformer.encode(src, mask)
->>> x = transformer.tgt_embed(tgt_in)
->>> _, T, _ = x.shape
->>> causal_mask = torch.ones(1, T, T, dtype=torch.bool).tril().to(device)
->>> z, attn = transformer.decoder_stack[0].self_attn(x,x,x,mask=causal_mask, need_attn=True)
->>> attn[0][0]
-"""
