@@ -44,12 +44,16 @@ class Transformer(nn.Module):
         self.tgt_embed = EmbeddingLayer(tgt_vocab_size, d_model)
 
         # Define the encoder and the decoder modules.
+        # Note that because of the Pre-LN architecture we need to apply layer
+        # norm to the outputs of the encoder and decoder stacks.
         self.encoder_stack = nn.ModuleList((
             EncoderLayer(d_model, n_heads, dim_mlp, dropout) for _ in range(n_enc)
         ))
+        self.enc_norm = nn.LayerNorm(d_model)
         self.decoder_stack = nn.ModuleList((
             DecoderLayer(d_model, n_heads, dim_mlp, dropout) for _ in range(n_dec)
         ))
+        self.dec_norm = nn.LayerNorm(d_model)
 
         # Project the embeddings from the decoder into the target vocab space.
         self.tgt_vocab_proj = nn.Linear(d_model, tgt_vocab_size, bias=False)
@@ -63,13 +67,13 @@ class Transformer(nn.Module):
         z = self.src_embed(src)
         for encoder in self.encoder_stack:
             z = encoder(z, src_mask)
-        return z
+        return self.enc_norm(z)
 
     def decode(self, tgt, mem, mem_mask):
         z = self.tgt_embed(tgt)
         for decoder in self.decoder_stack:
             z = decoder(z, mem, mem_mask)
-        return z
+        return self.dec_norm(z)
 
     def forward(self, src, tgt, src_mask=None):
         """Given a source sequence, perform a forward pass through the
