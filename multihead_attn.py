@@ -1,7 +1,6 @@
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class MultiHeadAttention(nn.Module):
@@ -10,7 +9,7 @@ class MultiHeadAttention(nn.Module):
     https://arxiv.org/abs/1706.03762
     """
 
-    def __init__(self, in_dim, qk_dim, v_dim, n_heads, attn_dropout=0.):
+    def __init__(self, in_dim, qk_dim, v_dim, out_dim, n_heads, attn_dropout=0.):
         """Init a multi-head attention layer.
 
         Args:
@@ -19,8 +18,9 @@ class MultiHeadAttention(nn.Module):
             qk_dim: int
                 Number of features in the query and key embeddings.
             v_dim: int
-                Number of features in the value embedding. The number of output
-                features will match the number of features in the values.
+                Number of features in the value embedding.
+            out_dim: int
+                Number of output features.
             n_heads: int
                 Number of attention heads.
             attn_dropout: float, optional
@@ -35,13 +35,13 @@ class MultiHeadAttention(nn.Module):
         self.Q = nn.Linear(in_dim, qk_dim, bias=False)
         self.K = nn.Linear(in_dim, qk_dim, bias=False)
         self.V = nn.Linear(in_dim, v_dim, bias=False)
-        self.Wo = nn.Linear(v_dim, v_dim)
+        self.Wo = nn.Linear(v_dim, out_dim)
         self.attn_dropout = nn.Dropout(attn_dropout)
 
         # Initialize the Q and K matrices using Xavier initialization to make
         # sure that the produced queries and keys have unit std.
-        nn.init.xavier_normal_(self.Q.weight)
-        nn.init.xavier_normal_(self.K.weight)
+        nn.init.normal_(self.Q.weight, std=np.sqrt(2 / (in_dim + qk_dim//n_heads)))
+        nn.init.normal_(self.K.weight, std=np.sqrt(2 / (in_dim + qk_dim//n_heads)))
 
         # The V and Wo matrices will use the default initialization for the
         # weights. The Wo biases will be set to zero.

@@ -40,6 +40,7 @@ class EncoderLayer(nn.Module):
             in_dim=d_model,
             qk_dim=d_model,
             v_dim=d_model,
+            out_dim=d_model,
             n_heads=n_heads,
             attn_dropout=dropout,
         )
