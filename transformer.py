@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 
-from encoder import EncoderLayer
-from decoder import DecoderLayer
+from encoder import EncoderBlock
+from decoder import DecoderBlock
 from embedding import EmbeddingLayer
 
 
@@ -47,11 +47,11 @@ class Transformer(nn.Module):
         # Note that because of the Pre-LN architecture we need to apply layer
         # norm to the outputs of the encoder and decoder stacks.
         self.encoder_stack = nn.ModuleList((
-            EncoderLayer(d_model, n_heads, dim_mlp, dropout) for _ in range(n_enc)
+            EncoderBlock(d_model, n_heads, dim_mlp, dropout) for _ in range(n_enc)
         ))
         self.enc_norm = nn.LayerNorm(d_model)
         self.decoder_stack = nn.ModuleList((
-            DecoderLayer(d_model, n_heads, dim_mlp, dropout) for _ in range(n_dec)
+            DecoderBlock(d_model, n_heads, dim_mlp, dropout) for _ in range(n_dec)
         ))
         self.dec_norm = nn.LayerNorm(d_model)
 

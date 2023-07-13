@@ -3,18 +3,18 @@ import torch.nn as nn
 from multihead_attn import MultiHeadAttention
 
 
-class EncoderLayer(nn.Module):
-    """Transformer Encoder layer as described in section 3.1 of the paper
+class EncoderBlock(nn.Module):
+    """Transformer Encoder block as described in section 3.1 of the paper
     "Attention is all you need"
     https://arxiv.org/abs/1706.03762
     """
 
     def __init__(self, d_model, n_heads, dim_mlp=2048, dropout=0.0):
-        """Init an Encoder layer for the Transformer model.
+        """Init an Encoder block for the Transformer model.
 
         Args:
             d_model: int
-                Size of the encoder layer. Because the model uses residual
+                Size of the encoder block. Because the model uses residual
                 connections, both the input and the output will have the same size.
             n_heads: int
                 Number of heads for multi-head attention.
@@ -27,7 +27,7 @@ class EncoderLayer(nn.Module):
         super().__init__()
         assert d_model % n_heads == 0, "model dims must be divisible by num heads"
 
-        # The encoder layer has two sub-layers.
+        # The encoder block has two sub-layers.
         # Residual connections are applied around each of the two sub-layers.
         # Before applying the sub-layer we will normalize the input, as proposed
         # in Ruibin Xiong et al. (http://proceedings.mlr.press/v119/xiong20b/xiong20b.pdf).
@@ -57,7 +57,7 @@ class EncoderLayer(nn.Module):
         self.mlp_norm = nn.LayerNorm(d_model)
 
     def forward(self, x, mask=None):
-        """Encode the input using the Transformer Encoder layer.
+        """Encode the input using the Transformer Encoder block.
 
         Args:
             x: torch.Tensor
