@@ -9,7 +9,7 @@ class MultiHeadAttention(nn.Module):
     https://arxiv.org/abs/1706.03762
     """
 
-    def __init__(self, in_dim, qk_dim, v_dim, out_dim, n_heads, attn_dropout=0.):
+    def __init__(self, in_dim, qk_dim, v_dim, out_dim, n_heads, attn_dropout):
         """Init a multi-head attention layer.
 
         Args:
@@ -23,8 +23,8 @@ class MultiHeadAttention(nn.Module):
                 Number of output features.
             n_heads: int
                 Number of attention heads.
-            attn_dropout: float, optional
-                Dropout value for the attention scores. Default: 0.
+            attn_dropout: float
+                Dropout value for the attention scores.
         """
         super().__init__()
         assert qk_dim % n_heads == 0, "query and key dims must be divisible by num heads"

@@ -10,7 +10,7 @@ class DecoderBlock(nn.Module):
     https://arxiv.org/abs/1706.03762
     """
 
-    def __init__(self, d_model, n_heads, dim_mlp=2048, dropout=0.0):
+    def __init__(self, d_model, n_heads, dim_mlp, dropout):
         """Init an Decoder block for the Transformer model.
 
         Args:
@@ -19,11 +19,11 @@ class DecoderBlock(nn.Module):
                 connections, both the input and the output will have the same size.
             n_heads: int
                 Number of heads for multi-head attention.
-            dim_mlp: int, optional
-                Dimension of the hidden layer of the MLP network. Default: 2048.
-            dropout: int, optional
+            dim_mlp: int
+                Dimension of the hidden layer of the MLP network.
+            dropout: float
                 Dropout rate applied for the multi-head attention, as well as
-                to the outputs of the sub-layers. Default: 0.
+                to the outputs of the sub-layers.
         """
         super().__init__()
         assert d_model % n_heads == 0, "model dims must be divisible by num heads"
