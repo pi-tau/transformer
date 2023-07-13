@@ -4,6 +4,10 @@ The transformer model was first introduced in the paper:
  * "Attention is all you need" by Vaswani et. al.,
  ([here](https://arxiv.org/abs/1706.03762))
 
+For a really thorough and in-depth discussion of the implementation of the
+Transformer you can check out a
+[blog post](https://pi-tau.github.io/posts/transformer/) that I wrote about it.
+
 The transformer is used for modelling sequence-to-sequence tasks (like machine
 translation), where the input sequence is encoded using an encoder and then the
 output sequence is produced using a decoder.
