@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from encoder import EncoderBlock
 from decoder import DecoderBlock
@@ -175,17 +176,16 @@ if __name__ == "__main__":
     import torch.nn.functional as F
     import torch.utils.data as data
     from torch.nn.utils.rnn import pad_sequence
-    from tqdm import tqdm
 
     seed(0)
     torch.manual_seed(seed=0)
     torch.backends.cudnn.deterministic = True
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     bos_idx, eos_idx, pad_idx = 1, 2, 0
-    vocab_size, max_len = 100, 16
+    vocab_size, src_len = 100, 16
 
     data_loader = data.DataLoader(  # random sequences of different lengths
-        dataset=[torch.randint(3, vocab_size, (randint(max_len//2, max_len),)) for _ in range(50000)],
+        dataset=[torch.randint(3, vocab_size, (randint(src_len//2, src_len),)) for _ in range(50000)],
         batch_size=128, shuffle=True, drop_last=True,
         collate_fn=lambda batch: (
             pad_sequence(batch, batch_first=True, padding_value=pad_idx),
@@ -196,37 +196,22 @@ if __name__ == "__main__":
     )
 
     transformer = Transformer(
-        src_vocab_size=vocab_size, tgt_vocab_size=None,
-        d_model=64, n_heads=1, n_enc=2, n_dec=2, dim_mlp=128, dropout=0.1,
+        src_vocab_size=vocab_size, tgt_vocab_size=None, max_seq_len=32,
+        d_model=64, n_heads=2, n_enc=2, n_dec=2, dim_mlp=128, dropout=0.1,
     ).to(device)
-    optim = torch.optim.Adam(transformer.parameters(), lr=1e-3, weight_decay=0.)
+    optim = torch.optim.AdamW(transformer.parameters(), lr=1e-3, weight_decay=1e-4)
 
-    epochs = 50
-    pbar = tqdm(total=epochs*len(data_loader), desc="Iteration")
-    for e in range(epochs):
-        epoch_loss = 0.
+    for e in range(10):
         for src, tgt in data_loader:
             src, tgt = src.to(device), tgt.to(device)
             tgt_in, tgt_out = tgt[:, :-1], tgt[:, 1:]
             logits = transformer(src, tgt_in, (src != pad_idx))
             loss = F.cross_entropy(
-                logits.permute(0,2,1), tgt_out, ignore_index=pad_idx, reduction="mean")
-            epoch_loss += loss.item()
+                logits.permute(0,2,1), tgt_out, ignore_index=pad_idx)
 
             optim.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(transformer.parameters(), 1.)
             optim.step()
-
-            pbar.update()
-
-        x1 = torch.LongTensor([3, 5, 8, 13, 21, 34, 55, 89]).unsqueeze(dim=0).to(device)
-        y1 = transformer.greedy_decode(x1, None, bos_idx, eos_idx)
-        x2 = torch.randint(low=3, high=vocab_size, size=(14,)).unsqueeze(dim=0).to(device)
-        y2 = transformer.greedy_decode(x2, None, bos_idx, eos_idx)
-        tqdm.write(f"Epoch: {e+1}\n\tx1: {x1}\n\ty1: {y1}\n\n\tx2: {x2}\n\ty2: {y2}")
-        tqdm.write(f"\tloss: {epoch_loss/len(data_loader):.5f}")
-
-    pbar.close()
 
 #
