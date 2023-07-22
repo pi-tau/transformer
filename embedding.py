@@ -34,7 +34,7 @@ class TokenEmbedding(nn.Module):
 
     def forward(self, x):
         _, T = x.shape
-        if T >= self.max_len: # explicitly check out-of-bound slicing
+        if T > self.max_len: # explicitly check out-of-bound slicing
             raise RuntimeError("Sequence length exceeds the maximum allowed limit")
 
         pos = self.positions[:, :T]
